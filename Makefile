@@ -3,7 +3,7 @@ SPK_BUILD="1"
 
 .PHONY: tailscale-% clean purge
 
-all: tailscale-amd64 tailscale-386 tailscale-arm64 tailscale-arm
+all: tailscale-amd64 tailscale-386 tailscale-arm64 tailscale-arm tailscale-mips tailscale-mipsle
 
 tailscale-%:
 	@./build-package.sh ${TAILSCALE_VERSION} $* ${SPK_BUILD}
