@@ -1,10 +1,17 @@
-#!/bin/sh
+#!/bin/bash
 
 SERVICE_NAME="tailscale"
-PID_FILE="${SYNOPKG_PKGDEST}/var/tailscaled.pid"
-LOG_FILE="${SYNOPKG_PKGDEST}/var/tailscaled.log"
-STATE_FILE="${SYNOPKG_PKGDEST}/var/tailscaled.state"
-SOCKET_FILE="${SYNOPKG_PKGDEST}/var/tailscaled.sock"
+
+if [ "${SYNOPKG_DSM_VERSION_MAJOR}" -eq "6" ]; then
+    PKGVAR="/var/packages/Tailscale/etc"
+else
+    PKGVAR="${SYNOPKG_PKGVAR}"
+fi
+
+PID_FILE="${PKGVAR}/tailscaled.pid"
+LOG_FILE="${PKGVAR}/tailscaled.stdout.log"
+STATE_FILE="${PKGVAR}/tailscaled.state"
+SOCKET_FILE="${PKGVAR}/tailscaled.sock"
 PORT="41641"
 
 SERVICE_COMMAND="${SYNOPKG_PKGDEST}/bin/tailscaled \
@@ -12,33 +19,37 @@ SERVICE_COMMAND="${SYNOPKG_PKGDEST}/bin/tailscaled \
 --socket=${SOCKET_FILE} \
 --port=$PORT"
 
+if [ "${SYNOPKG_DSM_VERSION_MAJOR}" -eq "7" -a ! -e "/dev/net/tun" ]; then
+    # TODO(maisem/crawshaw): Disable the tun device in DSM7 for now.
+    SERVICE_COMMAND="${SERVICE_COMMAND} --tun=userspace-networking"
+fi
+
+if [ "${SYNOPKG_DSM_VERSION_MAJOR}" -eq "6" ]; then
+    chown -R tailscale:tailscale "${PKGVAR}/"
+fi
+
 start_daemon() {
     local ts=$(date --iso-8601=second)
-    echo "${ts} Starting ${SERVICE_NAME} with: ${SERVICE_COMMAND}" >>${LOG_FILE}
-    ${SERVICE_COMMAND} >>${LOG_FILE} 2>&1 &
-    if [ -n "${PID_FILE}" ]; then
-        echo "$!" >"${PID_FILE}"
-    else
-        wait_for_status 0
-    fi
+    echo "${ts} Starting ${SERVICE_NAME} with: ${SERVICE_COMMAND}" >${LOG_FILE}
+    STATE_DIRECTORY=${PKGVAR} ${SERVICE_COMMAND} >>${LOG_FILE} 2>&1 &
+    echo "$!" >"${PID_FILE}"
 }
 
 stop_daemon() {
-    if [ -n "${PID_FILE}" -a -r "${PID_FILE}" ]; then
+    if [ -r "${PID_FILE}" ]; then
         local PID=$(cat "${PID_FILE}")
         local ts=$(date --iso-8601=second)
         echo "${ts} Stopping ${SERVICE_NAME} service PID=${PID}" >>${LOG_FILE}
         kill -TERM $PID >>${LOG_FILE} 2>&1
         wait_for_status 1 || kill -KILL $PID >>${LOG_FILE} 2>&1
-        if [ -f "${PID_FILE}" ]; then
-            rm -f "${PID_FILE}" >/dev/null
-        fi
+        rm -f "${PID_FILE}" >/dev/null
     fi
 }
 
 daemon_status() {
-    if [ -n "${PID_FILE}" -a -r "${PID_FILE}" ]; then
-        if kill -0 $(cat "${PID_FILE}") >/dev/null 2>&1; then
+    if [ -r "${PID_FILE}" ]; then
+        local PID=$(cat "${PID_FILE}")
+        if ps -o pid -p ${PID} > /dev/null; then
             return
         fi
         rm -f "${PID_FILE}" >/dev/null
@@ -60,6 +71,10 @@ wait_for_status() {
 }
 
 ensure_tun_created() {
+    if [ "${SYNOPKG_DSM_VERSION_MAJOR}" -eq "7" ]; then
+        # TODO(maisem/crawshaw): Disable the tun device in DSM7 for now.
+        return
+    fi
     # Create the necessary file structure for /dev/net/tun
     if ([ ! -c /dev/net/tun ]); then
         if ([ ! -d /dev/net ]); then
@@ -78,10 +93,8 @@ ensure_tun_created() {
 case $1 in
 start)
     if daemon_status; then
-        echo "${SERVICE_NAME} is already running"
         exit 0
     else
-        echo "Starting ${SERVICE_NAME} ..."
         ensure_tun_created
         start_daemon
         exit $?
@@ -89,11 +102,9 @@ start)
     ;;
 stop)
     if daemon_status; then
-        echo "Stopping ${SERVICE_NAME} ..."
         stop_daemon
         exit $?
     else
-        echo "${SERVICE_NAME} is not running"
         exit 0
     fi
     ;;
