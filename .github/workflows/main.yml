@@ -31,6 +31,7 @@ jobs:
           cd tailscale-synology
           mkdir -p spks
           go run build.go -o spks --source=../tailscale --goarch=all --dsm-version=all
+        path: spks
       - name: Release
         uses: fnkr/github-action-ghr@v1
         env:
